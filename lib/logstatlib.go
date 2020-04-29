@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	"math"
+	"sort"
 
 	"github.com/cjnosal/logstat/pkg/line"
 )
@@ -35,13 +37,11 @@ type Config struct {
 
 type Result struct {
 	TotalLines int
-	StartTime  *time.Time
-	Buckets    map[int]Bucket
-	LastBucket int
+	ReferenceTime *time.Time
+	Buckets    map[time.Time]Bucket
 }
 
 type Bucket struct {
-	StartTime *time.Time
 	LineCount map[string]int
 }
 
@@ -73,8 +73,7 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 	}
 	bufr := bufio.NewReader(reader)
 	result := &Result{
-		Buckets:    map[int]Bucket{},
-		LastBucket: -1,
+		Buckets:    map[time.Time]Bucket{},
 	}
 	for {
 		str, err := bufr.ReadString('\n')
@@ -97,60 +96,44 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 }
 
 func (l *logStat) processLine(lp line.LineProcessor, config Config, line string, result *Result) error {
-	bucket := 0
-	var bucketStart time.Time
 	datetimes := lp.Extract(line)
-	var datetime string
 	if len(datetimes) == 0 {
-		l.logger.Printf("No datetime extracted from '%s' - appending to current bucket\n", line)
-		if len(result.Buckets) > 0 {
-			bucket = len(result.Buckets) - 1
-		}
-	} else {
-		datetime = datetimes[0]
-		var logtime *time.Time
-		parseErrors := []error{}
-		for _, i := range config.DateTimeFormats {
-			lt, e := time.Parse(i, datetime)
+		return fmt.Errorf("No datetime extracted from '%s'\n", line)
+	}
+	var logtime *time.Time
+	parseErrors := []error{}
+	for _, datetime := range datetimes {
+		for _, format := range config.DateTimeFormats {
+			lt, e := time.Parse(format, datetime)
 			if e == nil {
 				logtime = &lt
 				break
 			}
 			parseErrors = append(parseErrors, e)
 		}
-		if logtime == nil {
-			return fmt.Errorf("Failed to parse datetime from %s: %v\n", datetime, parseErrors)
+		if logtime != nil {
+			break
 		}
-		if result.StartTime == nil {
-			result.StartTime = logtime
-		}
-		if logtime.Before(*result.StartTime) {
-			return fmt.Errorf("No going back - ensure the log with the earliest timestamp (%v) is the first argument\n", logtime)
-		}
-		bucketStart = *result.StartTime
-		t := result.StartTime.Add(config.BucketDuration)
-		for {
-			if t.After(*logtime) {
-				break
-			}
-			bucketStart = t
-			t = t.Add(config.BucketDuration)
-			bucket = bucket + 1
-		}
-
 	}
+	if logtime == nil {
+		return fmt.Errorf("Failed to parse datetime from %s: %v\n", datetimes, parseErrors)
+	}
+	if result.ReferenceTime == nil {
+		result.ReferenceTime = logtime
+	}
+
+	offset := float64(logtime.Sub(*result.ReferenceTime))
+
+	bucketOffset := int64(math.Floor(offset / float64(config.BucketDuration)))
+	bucketStart := result.ReferenceTime.Add(time.Duration(bucketOffset) * config.BucketDuration)
 
 	uniqueLine := lp.Denoise(line)
-	if result.Buckets[bucket].LineCount == nil {
-		result.Buckets[bucket] = Bucket{
+	if result.Buckets[bucketStart].LineCount == nil {
+		result.Buckets[bucketStart] = Bucket{
 			LineCount: map[string]int{},
-			StartTime: &bucketStart,
 		}
 	}
-	result.Buckets[bucket].LineCount[uniqueLine] = result.Buckets[bucket].LineCount[uniqueLine] + 1
-	if bucket > result.LastBucket {
-		result.LastBucket = bucket
-	}
+	result.Buckets[bucketStart].LineCount[uniqueLine] = result.Buckets[bucketStart].LineCount[uniqueLine] + 1
 
 	result.TotalLines = result.TotalLines + 1
 	return nil
@@ -159,14 +142,20 @@ func (l *logStat) processLine(lp line.LineProcessor, config Config, line string,
 func (l *logStat) Histogram(config Config, result *Result, out io.Writer) error {
 	outLog := log.New(out, "", 0)
 
+	bucketTimes := make(timeSlice, len(result.Buckets))
+	i := 0
+	for k := range result.Buckets {
+	    bucketTimes[i] = k
+	    i++
+	}
+	sort.Sort(bucketTimes)
+
 	minCount := 1<<32 - 1
 	maxCount := 0
-	for i := 0; i <= result.LastBucket; i = i + 1 {
+	for _, bucket := range result.Buckets {
 		value := 0
-		if result.Buckets[i].StartTime != nil {
-			for _, c := range result.Buckets[i].LineCount {
-				value = value + c
-			}
+		for _, c := range bucket.LineCount {
+			value = value + c
 		}
 		if value > maxCount {
 			maxCount = value
@@ -179,16 +168,10 @@ func (l *logStat) Histogram(config Config, result *Result, out io.Writer) error 
 	scale := maxCount - minCount
 	desiredScale := 40
 
-	for i := 0; i <= result.LastBucket; i = i + 1 {
+	for _, startTime := range bucketTimes {
 		value := 0
-		startTime := result.Buckets[i].StartTime
-		if startTime != nil {
-			for _, c := range result.Buckets[i].LineCount {
-				value = value + c
-			}
-		} else {
-			t := result.StartTime.Add(config.BucketDuration * time.Duration(i))
-			startTime = &t
+		for _, c := range result.Buckets[startTime].LineCount {
+			value = value + c
 		}
 
 		bar := (int)((float64(value-minCount) / float64(scale)) * float64(desiredScale))
@@ -201,13 +184,26 @@ func (l *logStat) Histogram(config Config, result *Result, out io.Writer) error 
 	}
 
 	outLog.Println("")
-	for i := 0; i <= result.LastBucket; i = i + 1 {
-		if result.Buckets[i].StartTime != nil {
-			for l, c := range result.Buckets[i].LineCount {
-				outLog.Printf("%s: %d %s\n", *result.Buckets[i].StartTime, c, l)
-			}
+	for _, startTime := range bucketTimes {
+		outLog.Printf("%s:\n", startTime)
+		for l, c := range result.Buckets[startTime].LineCount {
+			outLog.Printf("  %d %s\n", c, l)
 		}
 	}
 
 	return nil
+}
+
+type timeSlice []time.Time
+
+func (p timeSlice) Len() int {
+    return len(p)
+}
+
+func (p timeSlice) Less(i, j int) bool {
+    return p[i].Before(p[j])
+}
+
+func (p timeSlice) Swap(i, j int) {
+    p[i], p[j] = p[j], p[i]
 }
