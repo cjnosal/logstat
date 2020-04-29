@@ -53,14 +53,14 @@ func (l *logStat) ProcessFiles(logFiles []string, config Config) (*Result, error
 	if len(logFiles) == 0 {
 		return nil, fmt.Errorf("At least one log file required")
 	}
-	streams := []io.Reader{}
-	for _, lf := range logFiles {
+	streams := make([]io.Reader, len(logFiles))
+	for i, lf := range logFiles {
 		f, e := os.Open(lf)
 		if e != nil {
 			return nil, e
 		}
 		defer f.Close()
-		streams = append(streams, f)
+		streams[i] = f
 	}
 	mr := io.MultiReader(streams...)
 	return l.ProcessStream(mr, config)

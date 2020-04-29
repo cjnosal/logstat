@@ -12,30 +12,30 @@ type LineProcessor interface {
 
 func NewLineProcessor(matchPatterns []string, denoisePatterns []string, extractPatterns []string) (LineProcessor, error) {
 	lp := &lineProcessor{
-		matchPatterns:   []*regexp.Regexp{},
-		denoisePatterns: []*regexp.Regexp{},
-		extractPatterns: []*regexp.Regexp{},
+		matchPatterns:   make([]*regexp.Regexp, len(matchPatterns)),
+		denoisePatterns: make([]*regexp.Regexp, len(denoisePatterns)),
+		extractPatterns: make([]*regexp.Regexp, len(extractPatterns)),
 	}
-	for _, i := range matchPatterns {
-		r, e := regexp.Compile(i)
+	for i, p := range matchPatterns {
+		r, e := regexp.Compile(p)
 		if e != nil {
 			return nil, e
 		}
-		lp.matchPatterns = append(lp.matchPatterns, r)
+		lp.matchPatterns[i] = r
 	}
-	for _, i := range denoisePatterns {
-		r, e := regexp.Compile(i)
+	for i, p := range denoisePatterns {
+		r, e := regexp.Compile(p)
 		if e != nil {
 			return nil, e
 		}
-		lp.denoisePatterns = append(lp.denoisePatterns, r)
+		lp.denoisePatterns[i] = r
 	}
-	for _, i := range extractPatterns {
-		r, e := regexp.Compile(i)
+	for i, p := range extractPatterns {
+		r, e := regexp.Compile(p)
 		if e != nil {
 			return nil, e
 		}
-		lp.extractPatterns = append(lp.extractPatterns, r)
+		lp.extractPatterns[i] = r
 	}
 	return lp, nil
 }
