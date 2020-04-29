@@ -174,7 +174,15 @@ func (l *logStat) Histogram(config Config, result *Result, out io.Writer) error 
 			value = value + c
 		}
 
-		bar := (int)((float64(value-minCount) / float64(scale)) * float64(desiredScale))
+		bar := value
+		if maxCount > desiredScale {
+			// offset
+			bar -= minCount - 1
+		}
+		if scale > desiredScale {
+			// squish
+			bar = (int)((float64(bar) / float64(scale)) * float64(desiredScale))
+		}
 
 		out.Write([]byte(fmt.Sprintf("%s: ", startTime)))
 		for j := 0; j < bar; j = j + 1 {
