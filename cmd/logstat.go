@@ -30,7 +30,7 @@ func main() {
 	command.Flags().StringSliceVarP(&denoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, guids)")
 	command.Flags().StringSliceVarP(&searchPatterns, "search", "s", []string{}, "search for lines matching regex pattern")
 	command.Flags().StringSliceVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
-	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes")
+	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
 	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
 
 	err := command.Execute()
@@ -52,8 +52,47 @@ func run(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	datetimeFormats = append(datetimeFormats, time.RFC3339, "2006-01-02 15:04:05")
-	datetimePatterns = append(datetimePatterns, "\\d\\d\\d\\d-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d", "\\d\\d\\d\\d-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d")
+	// look for rfc3339-like numeric datetimes
+	defaultDateTimePattern := "\\d\\d\\d\\d[-/]\\d\\d[-/]\\d\\d[T ]\\d\\d:\\d\\d:\\d\\d(\\.\\d*)?Z?[+-]?(\\d\\d)?:?(\\d\\d)?"
+	defaultDateTimeFormats := []string{
+		time.RFC3339Nano,                      // - T n Zhh:mm
+		"2006-01-02T15:04:05.999999999Z0700",  // - T n Zhhmm
+		"2006-01-02T15:04:05.999999999Z07",    // - T n Zhh
+		time.RFC3339,                          // - T   Zhh:mm
+		"2006-01-02T15:04:05Z0700",            // - T   Zhhmm
+		"2006-01-02T15:04:05Z07",              // - T   Zhh
+		"2006-01-02T15:04:05.999999999",       // - T n
+		"2006-01-02T15:04:05",                 // - T
+
+		"2006/01/02T15:04:05.999999999Z07:00", // / T n Zhh:mm
+		"2006/01/02T15:04:05.999999999Z0700",  // / T n Zhhmm
+		"2006/01/02T15:04:05.999999999Z07",    // / T n Zhh
+		"2006/01/02T15:04:05Z07:00",           // / T   Zhh:mm
+		"2006/01/02T15:04:05Z0700",            // / T   Zhhmm
+		"2006/01/02T15:04:05Z07",              // / T   Zhh
+		"2006/01/02T15:04:05.999999999",       // / T n
+		"2006/01/02T15:04:05",                 // / T
+
+		"2006-01-02 15:04:05.999999999Z07:00", // -   n Zhh:mm
+		"2006-01-02 15:04:05.999999999Z0700",  // -   n Zhhmm
+		"2006-01-02 15:04:05.999999999Z07",    // -   n Zhh
+		"2006-01-02 15:04:05Z07:00",           // -     Zhh:mm
+		"2006-01-02 15:04:05Z0700",            // -     Zhhmm
+		"2006-01-02 15:04:05Z07",              // -     Zhh
+		"2006-01-02 15:04:05.999999999",       // -   n
+		"2006-01-02 15:04:05",                 // -
+
+		"2006/01/02 15:04:05.999999999Z07:00", // /   n Zhh:mm
+		"2006/01/02 15:04:05.999999999Z0700",  // /   n Zhhmm
+		"2006/01/02 15:04:05.999999999Z07",    // /   n Zhh
+		"2006/01/02 15:04:05Z07:00",           // /     Zhh:mm
+		"2006/01/02 15:04:05Z0700",            // /     Zhhmm
+		"2006/01/02 15:04:05Z07",              // /     Zhh
+		"2006/01/02 15:04:05.999999999",       // /   n
+		"2006/01/02 15:04:05",                 // /
+	}
+	datetimeFormats = append(datetimeFormats, defaultDateTimeFormats...)
+	datetimePatterns = append(datetimePatterns, defaultDateTimePattern)
 	config := lib.Config{
 		LineFilters:        searchPatterns,
 		DenoisePatterns:    append(denoisePatterns, datetimePatterns...),
