@@ -111,6 +111,7 @@ func run(cmd *cobra.Command, args []string) {
 	datetimeFormats = append(datetimeFormats, defaultDateTimeFormats...)
 	datetimePatterns = append(datetimePatterns, defaultDateTimePattern)
 
+	// regexes must be ordered from more structured to less structured
 	denoisePatterns := datetimePatterns
 	if replaceGuids {
 		denoisePatterns = append(denoisePatterns, regex.GUID)
@@ -121,10 +122,10 @@ func run(cmd *cobra.Command, args []string) {
 	if replaceLongWords {
 		denoisePatterns = append(denoisePatterns, regex.LONGWORDS)
 	}
+	denoisePatterns = append(denoisePatterns, userDenoisePatterns...)
 	if replaceNumbers {
 		denoisePatterns = append(denoisePatterns, regex.NUMBERS)
 	}
-	denoisePatterns = append(denoisePatterns, userDenoisePatterns...)
 	denoisePatterns = append(denoisePatterns, fmt.Sprintf("(%s)+", regexp.QuoteMeta(noiseReplacement)))
 
 	config := lib.Config{
