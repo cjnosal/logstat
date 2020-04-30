@@ -26,6 +26,7 @@ var replaceGuids bool
 var replaceBase64 bool
 var replaceNumbers bool
 var replaceLongWords bool
+var replaceLongHex bool
 
 var logger *log.Logger
 
@@ -50,6 +51,7 @@ func main() {
 	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
 	command.Flags().BoolVarP(&replaceNumbers, "numbers", "", true, "denoise all numbers")
 	command.Flags().BoolVarP(&replaceLongWords, "longwords", "", true, "denoise 20+ character words")
+	command.Flags().BoolVarP(&replaceLongHex, "longhex", "", true, "denoise 16+ character hexadecimal strings")
 
 	err := command.Execute()
 	if err != nil {
@@ -118,6 +120,9 @@ func run(cmd *cobra.Command, args []string) {
 	}
 	if replaceBase64 {
 		denoisePatterns = append(denoisePatterns, regex.BASE64)
+	}
+	if replaceLongHex {
+		denoisePatterns = append(denoisePatterns, regex.LONGHEX)
 	}
 	if replaceLongWords {
 		denoisePatterns = append(denoisePatterns, regex.LONGWORDS)
