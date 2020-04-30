@@ -31,7 +31,7 @@ type Config struct {
 	DateTimeExtractors []string
 	DateTimeFormats    []string
 	DenoisePatterns    []string
-
+	NoiseReplacement   string
 	BucketDuration time.Duration
 }
 
@@ -127,7 +127,7 @@ func (l *logStat) processLine(lp line.LineProcessor, config Config, line string,
 	bucketOffset := int64(math.Floor(offset / float64(config.BucketDuration)))
 	bucketStart := result.ReferenceTime.Add(time.Duration(bucketOffset) * config.BucketDuration)
 
-	uniqueLine := lp.Denoise(line)
+	uniqueLine := lp.Denoise(line, config.NoiseReplacement)
 	if result.Buckets[bucketStart].LineCount == nil {
 		result.Buckets[bucketStart] = Bucket{
 			LineCount: map[string]int{},

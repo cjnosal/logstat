@@ -4,6 +4,8 @@ import (
 	"log"
 	"os"
 	"time"
+	"fmt"
+	"regexp"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +17,8 @@ var searchPatterns []string
 var datetimePatterns []string
 var datetimeFormats []string
 var bucketLength string
+var noiseReplacement string
+
 var logger *log.Logger
 
 func main() {
@@ -32,6 +36,7 @@ func main() {
 	command.Flags().StringSliceVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
 	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
 	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
+	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
 
 	err := command.Execute()
 	if err != nil {
@@ -95,10 +100,11 @@ func run(cmd *cobra.Command, args []string) {
 	datetimePatterns = append(datetimePatterns, defaultDateTimePattern)
 	config := lib.Config{
 		LineFilters:        searchPatterns,
-		DenoisePatterns:    append(denoisePatterns, datetimePatterns...),
+		DenoisePatterns:    append(append(datetimePatterns, denoisePatterns...), fmt.Sprintf("(%s)+", regexp.QuoteMeta(noiseReplacement))),
 		DateTimeExtractors: datetimePatterns,
 		DateTimeFormats:    datetimeFormats,
 		BucketDuration:     duration,
+		NoiseReplacement:   noiseReplacement,
 	}
 	if len(args) == 0 {
 		result, err = lsl.ProcessStream(os.Stdin, config)

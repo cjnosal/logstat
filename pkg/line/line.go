@@ -6,7 +6,7 @@ import (
 
 type LineProcessor interface {
 	Match(line string) bool
-	Denoise(line string) string
+	Denoise(line string, replacement string) string
 	Extract(line string) []string
 }
 
@@ -55,9 +55,9 @@ func (lp *lineProcessor) Match(line string) bool {
 	return false
 }
 
-func (lp *lineProcessor) Denoise(line string) string {
+func (lp *lineProcessor) Denoise(line string, replacement string) string {
 	for _, r := range lp.denoisePatterns {
-		line = r.ReplaceAllString(line, "{noise}")
+		line = r.ReplaceAllString(line, replacement)
 	}
 	return line
 }
