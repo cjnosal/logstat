@@ -89,6 +89,10 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 		if len(config.LineFilters) > 0 && !lp.Match(str) {
 			continue
 		}
+		str = strings.TrimSpace(str)
+		if len(str) == 0 {
+			continue
+		}
 		if err = l.processLine(lp, config, str, result); err != nil {
 			return nil, err
 		}
