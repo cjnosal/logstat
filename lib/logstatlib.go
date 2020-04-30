@@ -94,7 +94,9 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 			continue
 		}
 		if err = l.processLine(lp, config, str, result); err != nil {
-			return nil, err
+			if err != nil {
+				l.logger.Println(err)
+			}
 		}
 	}
 	return result, nil
