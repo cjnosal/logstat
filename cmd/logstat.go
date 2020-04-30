@@ -20,6 +20,7 @@ var datetimePatterns []string
 var datetimeFormats []string
 var bucketLength string
 var noiseReplacement string
+var showBuckets bool
 
 var replaceGuids bool
 var replaceBase64 bool
@@ -44,6 +45,7 @@ func main() {
 	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
 	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
 	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
+	command.Flags().BoolVarP(&showBuckets, "showbuckets", "b", false, "show line counts for each time bucket")
 	command.Flags().BoolVarP(&replaceGuids, "guids", "", true, "denoise guids")
 	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
 	command.Flags().BoolVarP(&replaceNumbers, "numbers", "", true, "denoise all numbers")
@@ -143,9 +145,18 @@ func run(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	err = lsl.Histogram(config, result, os.Stdout)
+	err = lsl.Histogram(result, os.Stdout)
 	if err != nil {
 		logger.Printf("Error rendering histogram: %v\n", err)
 		os.Exit(1)
+	}
+
+	if showBuckets {
+		os.Stdout.Write([]byte{'\n'})
+		err = lsl.Buckets(result, os.Stdout)
+		if err != nil {
+			logger.Printf("Error rendering buckets: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }

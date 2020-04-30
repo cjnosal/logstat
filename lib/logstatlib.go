@@ -17,7 +17,8 @@ import (
 type LogStat interface {
 	ProcessFiles(logFiles []string, config Config) (*Result, error)
 	ProcessStream(reader io.Reader, config Config) (*Result, error)
-	Histogram(config Config, result *Result, out io.Writer) error
+	Histogram(result *Result, out io.Writer) error
+	Buckets(result *Result, out io.Writer) error
 }
 
 func NewLogStat(logger *log.Logger) LogStat {
@@ -139,9 +140,7 @@ func (l *logStat) processLine(lp line.LineProcessor, config Config, line string,
 	return nil
 }
 
-func (l *logStat) Histogram(config Config, result *Result, out io.Writer) error {
-	outLog := log.New(out, "", 0)
-
+func (l *logStat) Histogram(result *Result, out io.Writer) error {
 	bucketTimes := make(timeSlice, len(result.Buckets))
 	i := 0
 	for k := range result.Buckets {
@@ -190,8 +189,20 @@ func (l *logStat) Histogram(config Config, result *Result, out io.Writer) error 
 		}
 		out.Write([]byte(fmt.Sprintf(" %d\n", value)))
 	}
+	return nil
+}
 
-	outLog.Println("")
+func (l *logStat) Buckets(result *Result, out io.Writer) error {
+	outLog := log.New(out, "", 0)
+
+	bucketTimes := make(timeSlice, len(result.Buckets))
+	i := 0
+	for k := range result.Buckets {
+	    bucketTimes[i] = k
+	    i++
+	}
+	sort.Sort(bucketTimes)
+
 	for _, startTime := range bucketTimes {
 		outLog.Printf("%s:\n", startTime)
 		for l, c := range result.Buckets[startTime].LineCount {
