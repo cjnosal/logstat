@@ -7,17 +7,24 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/cjnosal/logstat/pkg/regex"
+
 	"github.com/spf13/cobra"
 
 	"github.com/cjnosal/logstat/lib"
 )
 
-var denoisePatterns []string
+var userDenoisePatterns []string
 var searchPatterns []string
 var datetimePatterns []string
 var datetimeFormats []string
 var bucketLength string
 var noiseReplacement string
+
+var replaceGuids bool
+var replaceBase64 bool
+var replaceNumbers bool
+var replaceLongWords bool
 
 var logger *log.Logger
 
@@ -31,12 +38,16 @@ func main() {
 		Run:   run,
 	}
 
-	command.Flags().StringSliceVarP(&denoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, guids)")
+	command.Flags().StringSliceVarP(&userDenoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, replaceGuidss)")
 	command.Flags().StringSliceVarP(&searchPatterns, "search", "s", []string{}, "search for lines matching regex pattern")
 	command.Flags().StringSliceVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
 	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
 	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
 	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
+	command.Flags().BoolVarP(&replaceGuids, "guids", "", true, "denoise guids")
+	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
+	command.Flags().BoolVarP(&replaceNumbers, "numbers", "", true, "denoise all numbers")
+	command.Flags().BoolVarP(&replaceLongWords, "longwords", "", true, "denoise 20+ character words")
 
 	err := command.Execute()
 	if err != nil {
@@ -57,8 +68,7 @@ func run(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// look for rfc3339-like numeric datetimes
-	defaultDateTimePattern := "\\d\\d\\d\\d[-/]\\d\\d[-/]\\d\\d[T ]\\d\\d:\\d\\d:\\d\\d(\\.\\d*)?Z?[+-]?(\\d\\d)?:?(\\d\\d)?"
+	defaultDateTimePattern := regex.RFC3339LIKE
 	defaultDateTimeFormats := []string{
 		time.RFC3339Nano,                      // - T n Zhh:mm
 		"2006-01-02T15:04:05.999999999Z0700",  // - T n Zhhmm
@@ -98,9 +108,26 @@ func run(cmd *cobra.Command, args []string) {
 	}
 	datetimeFormats = append(datetimeFormats, defaultDateTimeFormats...)
 	datetimePatterns = append(datetimePatterns, defaultDateTimePattern)
+
+	denoisePatterns := datetimePatterns
+	if replaceGuids {
+		denoisePatterns = append(denoisePatterns, regex.GUID)
+	}
+	if replaceBase64 {
+		denoisePatterns = append(denoisePatterns, regex.BASE64)
+	}
+	if replaceLongWords {
+		denoisePatterns = append(denoisePatterns, regex.LONGWORDS)
+	}
+	if replaceNumbers {
+		denoisePatterns = append(denoisePatterns, regex.NUMBERS)
+	}
+	denoisePatterns = append(denoisePatterns, userDenoisePatterns...)
+	denoisePatterns = append(denoisePatterns, fmt.Sprintf("(%s)+", regexp.QuoteMeta(noiseReplacement)))
+
 	config := lib.Config{
 		LineFilters:        searchPatterns,
-		DenoisePatterns:    append(append(datetimePatterns, denoisePatterns...), fmt.Sprintf("(%s)+", regexp.QuoteMeta(noiseReplacement))),
+		DenoisePatterns:    denoisePatterns,
 		DateTimeExtractors: datetimePatterns,
 		DateTimeFormats:    datetimeFormats,
 		BucketDuration:     duration,
