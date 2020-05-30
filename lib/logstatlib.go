@@ -14,6 +14,10 @@ import (
 	"github.com/cjnosal/logstat/pkg/line"
 )
 
+var (
+	epoch = time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC)
+)
+
 type LogStat interface {
 	ProcessFiles(logFiles []string, config Config) (*Result, error)
 	ProcessStream(reader io.Reader, config Config) (*Result, error)
@@ -33,7 +37,10 @@ type Config struct {
 	DateTimeFormats    []string
 	DenoisePatterns    []string
 	NoiseReplacement   string
-	BucketDuration time.Duration
+	BucketDuration     time.Duration
+	KeepOriginalLines  bool
+	StartTime          *time.Time
+	EndTime            *time.Time
 }
 
 type Result struct {
@@ -44,6 +51,8 @@ type Result struct {
 
 type Bucket struct {
 	LineCount map[string]int
+	Notes map[string]string
+	OriginalLines map[time.Time][]string
 }
 
 type logStat struct {
@@ -54,17 +63,26 @@ func (l *logStat) ProcessFiles(logFiles []string, config Config) (*Result, error
 	if len(logFiles) == 0 {
 		return nil, fmt.Errorf("At least one log file required")
 	}
-	streams := make([]io.Reader, len(logFiles))
-	for i, lf := range logFiles {
+	lp, err := line.NewLineProcessor(config.LineFilters, config.DenoisePatterns, config.DateTimeExtractors)
+	if err != nil {
+		return nil, err
+	}
+	result := &Result{
+		Buckets:    map[time.Time]Bucket{},
+	}
+	for _, lf := range logFiles {
 		f, e := os.Open(lf)
 		if e != nil {
 			return nil, e
 		}
 		defer f.Close()
-		streams[i] = f
+		bufr := bufio.NewReader(f)
+		err = l.processLines(fmt.Sprintf("start of %s", lf), bufr, lp, config, result)
+		if err != nil {
+			return nil, err
+		}
 	}
-	mr := io.MultiReader(streams...)
-	return l.ProcessStream(mr, config)
+	return result, nil
 }
 
 func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error) {
@@ -72,17 +90,29 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 	if err != nil {
 		return nil, err
 	}
-	bufr := bufio.NewReader(reader)
 	result := &Result{
 		Buckets:    map[time.Time]Bucket{},
 	}
+	bufr := bufio.NewReader(reader)
+	err = l.processLines("stream", bufr, lp, config, result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+
+func (l *logStat) processLines(tag string, bufr *bufio.Reader, lp line.LineProcessor, config Config, result *Result) error {
+	var tagRefTime *time.Time
+	var prevLineTime *time.Time
+	empty := true
 	for {
 		str, err := bufr.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				break
 			} else {
-				return nil, err
+				return err
 			}
 		}
 		str = strings.TrimSuffix(str, "\n")
@@ -93,20 +123,30 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 		if len(str) == 0 {
 			continue
 		}
-		if err = l.processLine(lp, config, str, result); err != nil {
-			if err != nil {
-				l.logger.Println(err)
+		var bucketStart *time.Time
+		prevLineTime, bucketStart, err = l.processLine(lp, config, str, result, prevLineTime)
+		if err != nil {
+			l.logger.Println(err)
+		} else if bucketStart != nil {
+			empty = false
+			if tagRefTime == nil && prevLineTime != nil {
+				tagRefTime = bucketStart
 			}
 		}
 	}
-	return result, nil
+	if !empty {
+		if tagRefTime == nil {
+			tagRefTime = &epoch
+		}
+		if tagRefTime != nil {
+			result.Buckets[*tagRefTime].Notes[tag] = ""
+		}
+	}
+	return nil
 }
 
-func (l *logStat) processLine(lp line.LineProcessor, config Config, line string, result *Result) error {
+func (l *logStat) processLine(lp line.LineProcessor, config Config, line string, result *Result, prevLineTime *time.Time) (*time.Time, *time.Time, error) {
 	datetimes := lp.Extract(line)
-	if len(datetimes) == 0 {
-		return fmt.Errorf("No datetime extracted from '%s'\n", line)
-	}
 	var logtime *time.Time
 	parseErrors := []error{}
 	for _, datetime := range datetimes {
@@ -122,11 +162,26 @@ func (l *logStat) processLine(lp line.LineProcessor, config Config, line string,
 			break
 		}
 	}
-	if logtime == nil {
-		return fmt.Errorf("Failed to parse datetime from %s: %v\n", datetimes, parseErrors)
-	}
 	if result.ReferenceTime == nil {
-		result.ReferenceTime = logtime
+		if logtime != nil {
+			result.ReferenceTime = logtime
+		} else {
+			result.ReferenceTime = &epoch
+		}
+	}
+	if logtime == nil {
+		if prevLineTime == nil {
+			logtime = &epoch
+		} else {
+			logtime = prevLineTime
+		}
+	}
+
+	if config.StartTime != nil && logtime.Before(*config.StartTime) {
+		return nil, nil, nil
+	}
+	if config.EndTime != nil && logtime.After(*config.EndTime) {
+		return nil, nil, nil
 	}
 
 	offset := float64(logtime.Sub(*result.ReferenceTime))
@@ -138,12 +193,20 @@ func (l *logStat) processLine(lp line.LineProcessor, config Config, line string,
 	if result.Buckets[bucketStart].LineCount == nil {
 		result.Buckets[bucketStart] = Bucket{
 			LineCount: map[string]int{},
+			Notes: map[string]string{},
+			OriginalLines: map[time.Time][]string{},
 		}
 	}
 	result.Buckets[bucketStart].LineCount[uniqueLine] = result.Buckets[bucketStart].LineCount[uniqueLine] + 1
+	if config.KeepOriginalLines {
+		if result.Buckets[bucketStart].OriginalLines[*logtime] == nil {
+			result.Buckets[bucketStart].OriginalLines[*logtime] = []string{}
+		}
+		result.Buckets[bucketStart].OriginalLines[*logtime] = append(result.Buckets[bucketStart].OriginalLines[*logtime], line)
+	}
 
 	result.TotalLines = result.TotalLines + 1
-	return nil
+	return logtime, &bucketStart, nil
 }
 
 func (l *logStat) Histogram(result *Result, out io.Writer) error {
@@ -174,6 +237,10 @@ func (l *logStat) Histogram(result *Result, out io.Writer) error {
 	desiredScale := 40
 
 	for _, startTime := range bucketTimes {
+		for note := range result.Buckets[startTime].Notes {
+			out.Write([]byte(fmt.Sprintf("  %s\n", note)))
+		}
+
 		value := 0
 		for _, c := range result.Buckets[startTime].LineCount {
 			value = value + c
@@ -211,8 +278,30 @@ func (l *logStat) Buckets(result *Result, out io.Writer) error {
 
 	for _, startTime := range bucketTimes {
 		outLog.Printf("%s:\n", startTime)
+		for note := range result.Buckets[startTime].Notes {
+			outLog.Printf("  %s\n", note)
+		}
+		outLog.Printf("\n")
+		
 		for l, c := range result.Buckets[startTime].LineCount {
-			outLog.Printf("  %d %s\n", c, l)
+			outLog.Printf("  %4d %s\n", c, l)
+		}
+		outLog.Printf("\n")
+
+		if len(result.Buckets[startTime].OriginalLines) > 0 {
+			lineTimes := make(timeSlice, len(result.Buckets[startTime].OriginalLines))
+			j := 0
+			for k := range result.Buckets[startTime].OriginalLines {
+			    lineTimes[j] = k
+			    j++
+			}
+			sort.Sort(lineTimes)
+			for _, lineTime := range lineTimes {
+				for _, line := range result.Buckets[startTime].OriginalLines[lineTime] {
+					outLog.Printf("  %s\n", line)
+				}
+			}
+			outLog.Printf("\n")
 		}
 	}
 

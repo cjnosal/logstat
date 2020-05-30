@@ -21,6 +21,10 @@ var datetimeFormats []string
 var bucketLength string
 var noiseReplacement string
 var showBuckets bool
+var mergeFiles bool
+
+var startTime string
+var endTime string
 
 var replaceGuids bool
 var replaceBase64 bool
@@ -44,9 +48,14 @@ func main() {
 	command.Flags().StringSliceVarP(&searchPatterns, "search", "s", []string{}, "search for lines matching regex pattern")
 	command.Flags().StringSliceVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
 	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
+	
 	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
-	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
 	command.Flags().BoolVarP(&showBuckets, "showbuckets", "b", false, "show line counts for each time bucket")
+	command.Flags().BoolVarP(&mergeFiles, "mergefiles", "m", false, "show original lines from each file interleaved by time")
+	command.Flags().StringVarP(&startTime, "starttime", "", "", "exclude lines before this time")
+	command.Flags().StringVarP(&endTime, "endtime", "", "", "exclude lines after this time")
+
+	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
 	command.Flags().BoolVarP(&replaceGuids, "guids", "", true, "denoise guids")
 	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
 	command.Flags().BoolVarP(&replaceNumbers, "numbers", "", true, "denoise all numbers")
@@ -133,6 +142,23 @@ func run(cmd *cobra.Command, args []string) {
 	}
 	denoisePatterns = append(denoisePatterns, fmt.Sprintf("(%s)+", regexp.QuoteMeta(noiseReplacement)))
 
+	var start *time.Time
+	var end *time.Time
+	if startTime != "" {
+		start, err = parseTime(startTime, datetimeFormats)
+	}
+	if err != nil {
+		logger.Printf("Error parsing start time: %v\n", err)
+		os.Exit(1)
+	}
+	if endTime != "" {
+		end, err = parseTime(endTime, datetimeFormats)
+	}
+	if err != nil {
+		logger.Printf("Error parsing end time: %v\n", err)
+		os.Exit(1)
+	}
+
 	config := lib.Config{
 		LineFilters:        searchPatterns,
 		DenoisePatterns:    denoisePatterns,
@@ -140,6 +166,9 @@ func run(cmd *cobra.Command, args []string) {
 		DateTimeFormats:    datetimeFormats,
 		BucketDuration:     duration,
 		NoiseReplacement:   noiseReplacement,
+		KeepOriginalLines:  mergeFiles,
+		StartTime: start,
+		EndTime: end,
 	}
 	if len(args) == 0 {
 		result, err = lsl.ProcessStream(os.Stdin, config)
@@ -165,4 +194,14 @@ func run(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 	}
+}
+
+func parseTime(datetime string, formats []string) (*time.Time, error) {
+	for _, format := range formats {
+		lt, e := time.Parse(format, datetime)
+		if e == nil {
+			return &lt, nil
+		}
+	}
+	return nil, fmt.Errorf("%s does not match any formats in %v", datetime, formats)
 }
