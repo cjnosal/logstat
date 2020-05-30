@@ -28,9 +28,11 @@ var endTime string
 
 var replaceGuids bool
 var replaceBase64 bool
+var replaceAlphaNumeric bool
 var replaceNumbers bool
 var replaceLongWords bool
 var replaceLongHex bool
+var replaceEmails bool
 
 var logger *log.Logger
 
@@ -58,9 +60,11 @@ func main() {
 	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
 	command.Flags().BoolVarP(&replaceGuids, "guids", "", true, "denoise guids")
 	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
+	command.Flags().BoolVarP(&replaceAlphaNumeric, "alphanum", "", true, "denoise all alphanumeric strings")
 	command.Flags().BoolVarP(&replaceNumbers, "numbers", "", true, "denoise all numbers")
 	command.Flags().BoolVarP(&replaceLongWords, "longwords", "", true, "denoise 20+ character words")
 	command.Flags().BoolVarP(&replaceLongHex, "longhex", "", true, "denoise 16+ character hexadecimal strings")
+	command.Flags().BoolVarP(&replaceEmails, "emails", "", true, "denoise all emails")
 
 	err := command.Execute()
 	if err != nil {
@@ -136,7 +140,13 @@ func run(cmd *cobra.Command, args []string) {
 	if replaceLongWords {
 		denoisePatterns = append(denoisePatterns, regex.LONGWORDS)
 	}
+	if replaceEmails {
+		denoisePatterns = append(denoisePatterns, regex.EMAILS)
+	}
 	denoisePatterns = append(denoisePatterns, userDenoisePatterns...)
+	if replaceAlphaNumeric {
+		denoisePatterns = append(denoisePatterns, regex.ALPHANUM)
+	}
 	if replaceNumbers {
 		denoisePatterns = append(denoisePatterns, regex.NUMBERS)
 	}
