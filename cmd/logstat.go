@@ -1,11 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
-	"time"
-	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/cjnosal/logstat/pkg/regex"
 
@@ -50,7 +50,7 @@ func main() {
 	command.Flags().StringSliceVarP(&searchPatterns, "search", "s", []string{}, "search for lines matching regex pattern")
 	command.Flags().StringSliceVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
 	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
-	
+
 	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
 	command.Flags().BoolVarP(&showBuckets, "showbuckets", "b", false, "show line counts for each time bucket")
 	command.Flags().BoolVarP(&mergeFiles, "mergefiles", "m", false, "show original lines from each file interleaved by time")
@@ -87,14 +87,14 @@ func run(cmd *cobra.Command, args []string) {
 
 	defaultDateTimePattern := regex.RFC3339LIKE
 	defaultDateTimeFormats := []string{
-		time.RFC3339Nano,                      // - T n Zhh:mm
-		"2006-01-02T15:04:05.999999999Z0700",  // - T n Zhhmm
-		"2006-01-02T15:04:05.999999999Z07",    // - T n Zhh
-		time.RFC3339,                          // - T   Zhh:mm
-		"2006-01-02T15:04:05Z0700",            // - T   Zhhmm
-		"2006-01-02T15:04:05Z07",              // - T   Zhh
-		"2006-01-02T15:04:05.999999999",       // - T n
-		"2006-01-02T15:04:05",                 // - T
+		time.RFC3339Nano,                     // - T n Zhh:mm
+		"2006-01-02T15:04:05.999999999Z0700", // - T n Zhhmm
+		"2006-01-02T15:04:05.999999999Z07",   // - T n Zhh
+		time.RFC3339,                         // - T   Zhh:mm
+		"2006-01-02T15:04:05Z0700",           // - T   Zhhmm
+		"2006-01-02T15:04:05Z07",             // - T   Zhh
+		"2006-01-02T15:04:05.999999999",      // - T n
+		"2006-01-02T15:04:05",                // - T
 
 		"2006/01/02T15:04:05.999999999Z07:00", // / T n Zhh:mm
 		"2006/01/02T15:04:05.999999999Z0700",  // / T n Zhhmm
@@ -177,8 +177,8 @@ func run(cmd *cobra.Command, args []string) {
 		BucketDuration:     duration,
 		NoiseReplacement:   noiseReplacement,
 		KeepOriginalLines:  mergeFiles,
-		StartTime: start,
-		EndTime: end,
+		StartTime:          start,
+		EndTime:            end,
 	}
 	if len(args) == 0 {
 		result, err = lsl.ProcessStream(os.Stdin, config)
@@ -198,7 +198,7 @@ func run(cmd *cobra.Command, args []string) {
 
 	if showBuckets {
 		os.Stdout.Write([]byte{'\n'})
-		err = lsl.Buckets(result, os.Stdout)
+		err = lsl.Buckets(result, os.Stdout, mergeFiles)
 		if err != nil {
 			logger.Printf("Error rendering buckets: %v\n", err)
 			os.Exit(1)

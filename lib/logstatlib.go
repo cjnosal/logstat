@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
-	"math"
-	"sort"
 
 	"github.com/cjnosal/logstat/pkg/line"
 )
@@ -22,7 +22,7 @@ type LogStat interface {
 	ProcessFiles(logFiles []string, config Config) (*Result, error)
 	ProcessStream(reader io.Reader, config Config) (*Result, error)
 	Histogram(result *Result, out io.Writer) error
-	Buckets(result *Result, out io.Writer) error
+	Buckets(result *Result, out io.Writer, showOriginalLines bool) error
 }
 
 func NewLogStat(logger *log.Logger) LogStat {
@@ -44,14 +44,19 @@ type Config struct {
 }
 
 type Result struct {
-	TotalLines int
 	ReferenceTime *time.Time
-	Buckets    map[time.Time]Bucket
+	Buckets       map[time.Time]*Bucket
 }
 
 type Bucket struct {
-	LineCount map[string]int
-	Notes map[string]string
+	Notes    map[string]string
+	Clusters map[string]*Cluster
+
+	LineCount int
+}
+
+type Cluster struct {
+	Reference     string
 	OriginalLines map[time.Time][]string
 }
 
@@ -68,7 +73,7 @@ func (l *logStat) ProcessFiles(logFiles []string, config Config) (*Result, error
 		return nil, err
 	}
 	result := &Result{
-		Buckets:    map[time.Time]Bucket{},
+		Buckets: map[time.Time]*Bucket{},
 	}
 	for _, lf := range logFiles {
 		f, e := os.Open(lf)
@@ -91,7 +96,7 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 		return nil, err
 	}
 	result := &Result{
-		Buckets:    map[time.Time]Bucket{},
+		Buckets: map[time.Time]*Bucket{},
 	}
 	bufr := bufio.NewReader(reader)
 	err = l.processLines("stream", bufr, lp, config, result)
@@ -100,7 +105,6 @@ func (l *logStat) ProcessStream(reader io.Reader, config Config) (*Result, error
 	}
 	return result, nil
 }
-
 
 func (l *logStat) processLines(tag string, bufr *bufio.Reader, lp line.LineProcessor, config Config, result *Result) error {
 	var tagRefTime *time.Time
@@ -190,63 +194,69 @@ func (l *logStat) processLine(lp line.LineProcessor, config Config, line string,
 	bucketStart := result.ReferenceTime.Add(time.Duration(bucketOffset) * config.BucketDuration)
 
 	uniqueLine := lp.Denoise(line, config.NoiseReplacement)
-	if result.Buckets[bucketStart].LineCount == nil {
-		result.Buckets[bucketStart] = Bucket{
-			LineCount: map[string]int{},
-			Notes: map[string]string{},
+
+	bucket := result.Buckets[bucketStart]
+	if bucket == nil {
+		bucket = &Bucket{
+			Notes:    map[string]string{},
+			Clusters: map[string]*Cluster{},
+		}
+		result.Buckets[bucketStart] = bucket
+	}
+	cluster := bucket.Clusters[uniqueLine]
+	if cluster == nil {
+		cluster = &Cluster{
+			Reference:     uniqueLine,
 			OriginalLines: map[time.Time][]string{},
 		}
-	}
-	result.Buckets[bucketStart].LineCount[uniqueLine] = result.Buckets[bucketStart].LineCount[uniqueLine] + 1
-	if config.KeepOriginalLines {
-		if result.Buckets[bucketStart].OriginalLines[*logtime] == nil {
-			result.Buckets[bucketStart].OriginalLines[*logtime] = []string{}
-		}
-		result.Buckets[bucketStart].OriginalLines[*logtime] = append(result.Buckets[bucketStart].OriginalLines[*logtime], line)
+		bucket.Clusters[uniqueLine] = cluster
 	}
 
-	result.TotalLines = result.TotalLines + 1
+	clusterItem := ""
+	if config.KeepOriginalLines {
+		clusterItem = line
+	}
+
+	clusterLines := cluster.OriginalLines[*logtime]
+	if clusterLines == nil {
+		clusterLines = []string{}
+	}
+	clusterLines = append(clusterLines, clusterItem)
+	cluster.OriginalLines[*logtime] = clusterLines
+
+	bucket.LineCount++
+
 	return logtime, &bucketStart, nil
 }
 
 func (l *logStat) Histogram(result *Result, out io.Writer) error {
 	bucketTimes := make(timeSlice, len(result.Buckets))
 	i := 0
-	for k := range result.Buckets {
-	    bucketTimes[i] = k
-	    i++
-	}
-	sort.Sort(bucketTimes)
-
 	minCount := 1<<32 - 1
 	maxCount := 0
-	for _, bucket := range result.Buckets {
-		value := 0
-		for _, c := range bucket.LineCount {
-			value = value + c
+	for k, bucket := range result.Buckets {
+		bucketTimes[i] = k
+		i++
+
+		if bucket.LineCount > maxCount {
+			maxCount = bucket.LineCount
 		}
-		if value > maxCount {
-			maxCount = value
-		}
-		if value < minCount {
-			minCount = value
+		if bucket.LineCount < minCount {
+			minCount = bucket.LineCount
 		}
 	}
+	sort.Sort(bucketTimes)
 
 	scale := maxCount - minCount
 	desiredScale := 40
 
 	for _, startTime := range bucketTimes {
-		for note := range result.Buckets[startTime].Notes {
+		bucket := result.Buckets[startTime]
+		for note := range bucket.Notes {
 			out.Write([]byte(fmt.Sprintf("  %s\n", note)))
 		}
 
-		value := 0
-		for _, c := range result.Buckets[startTime].LineCount {
-			value = value + c
-		}
-
-		bar := value
+		bar := bucket.LineCount
 		if maxCount > desiredScale {
 			// offset
 			bar -= minCount - 1
@@ -260,45 +270,63 @@ func (l *logStat) Histogram(result *Result, out io.Writer) error {
 		for j := 0; j < bar; j = j + 1 {
 			out.Write([]byte("*"))
 		}
-		out.Write([]byte(fmt.Sprintf(" %d\n", value)))
+		out.Write([]byte(fmt.Sprintf(" %d\n", bucket.LineCount)))
 	}
 	return nil
 }
 
-func (l *logStat) Buckets(result *Result, out io.Writer) error {
+func (l *logStat) Buckets(result *Result, out io.Writer, showOriginalLines bool) error {
 	outLog := log.New(out, "", 0)
 
 	bucketTimes := make(timeSlice, len(result.Buckets))
 	i := 0
 	for k := range result.Buckets {
-	    bucketTimes[i] = k
-	    i++
+		bucketTimes[i] = k
+		i++
 	}
 	sort.Sort(bucketTimes)
 
 	for _, startTime := range bucketTimes {
 		outLog.Printf("%s:\n", startTime)
-		for note := range result.Buckets[startTime].Notes {
+		bucket := result.Buckets[startTime]
+		for note := range bucket.Notes {
 			outLog.Printf("  %s\n", note)
 		}
 		outLog.Printf("\n")
-		
-		for l, c := range result.Buckets[startTime].LineCount {
-			outLog.Printf("  %4d %s\n", c, l)
+
+		for l, c := range bucket.Clusters {
+			sum := 0
+			for _, lines := range c.OriginalLines {
+				sum += len(lines)
+			}
+			outLog.Printf("  %4d %s\n", sum, l)
 		}
 		outLog.Printf("\n")
 
-		if len(result.Buckets[startTime].OriginalLines) > 0 {
-			lineTimes := make(timeSlice, len(result.Buckets[startTime].OriginalLines))
+		if showOriginalLines {
+			lineTimes := make(timeSlice, bucket.LineCount)
 			j := 0
-			for k := range result.Buckets[startTime].OriginalLines {
-			    lineTimes[j] = k
-			    j++
+			for _, c := range bucket.Clusters {
+				for k := range c.OriginalLines {
+					lineTimes[j] = k
+					j++
+				}
 			}
 			sort.Sort(lineTimes)
+			prevTime := time.Time{}
 			for _, lineTime := range lineTimes {
-				for _, line := range result.Buckets[startTime].OriginalLines[lineTime] {
-					outLog.Printf("  %s\n", line)
+				if lineTime == prevTime {
+					continue
+				}
+				prevTime = lineTime
+				for _, c := range bucket.Clusters {
+					clusterLines := c.OriginalLines[lineTime]
+					if clusterLines == nil {
+						continue
+					}
+					for _, line := range clusterLines { // logging by cluster, not original order
+						outLog.Printf("  %s\n", line)
+					}
 				}
 			}
 			outLog.Printf("\n")
@@ -311,13 +339,13 @@ func (l *logStat) Buckets(result *Result, out io.Writer) error {
 type timeSlice []time.Time
 
 func (p timeSlice) Len() int {
-    return len(p)
+	return len(p)
 }
 
 func (p timeSlice) Less(i, j int) bool {
-    return p[i].Before(p[j])
+	return p[i].Before(p[j])
 }
 
 func (p timeSlice) Swap(i, j int) {
-    p[i], p[j] = p[j], p[i]
+	p[i], p[j] = p[j], p[i]
 }
