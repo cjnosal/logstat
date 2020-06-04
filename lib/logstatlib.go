@@ -23,6 +23,7 @@ type LogStat interface {
 	ProcessStream(reader io.Reader, config Config) (*Result, error)
 	Histogram(result *Result, out io.Writer) error
 	Buckets(result *Result, out io.Writer, showOriginalLines bool) error
+	LastSeen(result *Result, out io.Writer) error
 }
 
 func NewLogStat(logger *log.Logger) LogStat {
@@ -333,6 +334,49 @@ func (l *logStat) Buckets(result *Result, out io.Writer, showOriginalLines bool)
 		}
 	}
 
+	return nil
+}
+
+func (l *logStat) LastSeen(result *Result, out io.Writer) error {
+	outLog := log.New(out, "", 0)
+
+	bucketTimes := make(timeSlice, len(result.Buckets))
+	i := 0
+	for k := range result.Buckets {
+		bucketTimes[i] = k
+		i++
+	}
+	sort.Sort(bucketTimes)
+
+	for i, startTime := range bucketTimes {
+		for ref, cluster := range result.Buckets[startTime].Clusters {
+			sum := 0
+			for _, lines := range cluster.OriginalLines {
+				sum += len(lines)
+			}
+
+			for j := i - 1; j >= 0; j-- { // TODO account for missing buckets
+				match := result.Buckets[bucketTimes[j]].Clusters[ref]
+
+				if match != nil {
+					matchsum := 0
+					for _, lines := range cluster.OriginalLines {
+						matchsum += len(lines)
+					}
+
+					if int(matchsum/10) == int(sum/10) {
+						if j == i - 1 {
+							break // constant load - ignore
+						} else {
+							gap := i - j
+							outLog.Printf("Found gap of %3d for %3d count of %s\n", gap, sum, ref)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 

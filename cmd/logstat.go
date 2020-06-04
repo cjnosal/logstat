@@ -204,6 +204,8 @@ func run(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 	}
+
+	lsl.LastSeen(result, os.Stdout)
 }
 
 func parseTime(datetime string, formats []string) (*time.Time, error) {
