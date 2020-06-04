@@ -21,6 +21,7 @@ var datetimeFormats []string
 var bucketLength string
 var noiseReplacement string
 var showBuckets bool
+var showGaps bool
 var mergeFiles bool
 
 var startTime string
@@ -53,6 +54,7 @@ func main() {
 
 	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
 	command.Flags().BoolVarP(&showBuckets, "showbuckets", "b", false, "show line counts for each time bucket")
+	command.Flags().BoolVarP(&showGaps, "showgaps", "g", false, "show bucket gaps and occurrences for denoised lines")
 	command.Flags().BoolVarP(&mergeFiles, "mergefiles", "m", false, "show original lines from each file interleaved by time")
 	command.Flags().StringVarP(&startTime, "starttime", "", "", "exclude lines before this time")
 	command.Flags().StringVarP(&endTime, "endtime", "", "", "exclude lines after this time")
@@ -205,7 +207,14 @@ func run(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	lsl.LastSeen(result, os.Stdout)
+	if showGaps {
+		os.Stdout.Write([]byte{'\n'})
+		err = lsl.LastSeen(result, os.Stdout)
+		if err != nil {
+			logger.Printf("Error rendering gaps: %v\n", err)
+			os.Exit(1)
+		}
+	}
 }
 
 func parseTime(datetime string, formats []string) (*time.Time, error) {

@@ -348,6 +348,7 @@ func (l *logStat) LastSeen(result *Result, out io.Writer) error {
 	}
 	sort.Sort(bucketTimes)
 
+	gaps := map[int]map[string]int{}
 	for i, startTime := range bucketTimes {
 		for ref, cluster := range result.Buckets[startTime].Clusters {
 			sum := 0
@@ -369,7 +370,12 @@ func (l *logStat) LastSeen(result *Result, out io.Writer) error {
 							break // constant load - ignore
 						} else {
 							gap := i - j
-							outLog.Printf("Found gap of %3d for %3d count of %s\n", gap, sum, ref)
+							grouping := gaps[gap]
+							if grouping == nil {
+								grouping = map[string]int{}
+								gaps[gap] = grouping
+							}
+							grouping[ref] = grouping[ref] + 1 // TODO record sum
 							break
 						}
 					}
@@ -377,6 +383,28 @@ func (l *logStat) LastSeen(result *Result, out io.Writer) error {
 			}
 		}
 	}
+
+	gapLengths := make(intSlice, len(gaps))
+	i = 0
+	for k := range gaps {
+		gapLengths[i] = k
+		i++
+	}
+	sort.Sort(gapLengths)
+
+	for _, l := range gapLengths {
+		newLength := true
+		for ref, count := range gaps[l] {
+			if count > 1 {
+				if newLength {
+					outLog.Printf("Gaps of %2d\n", l)
+				}
+				outLog.Printf("  %3d of %s\n", count, ref)
+				newLength = false
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -391,5 +419,19 @@ func (p timeSlice) Less(i, j int) bool {
 }
 
 func (p timeSlice) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+
+type intSlice []int
+
+func (p intSlice) Len() int {
+	return len(p)
+}
+
+func (p intSlice) Less(i, j int) bool {
+	return p[i] < p[j]
+}
+
+func (p intSlice) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }
