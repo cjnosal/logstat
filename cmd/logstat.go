@@ -21,8 +21,15 @@ var datetimeFormats []string
 var bucketLength string
 var noiseReplacement string
 var showBuckets bool
-var showGaps bool
 var mergeFiles bool
+
+var showGaps bool
+var minGap string
+var maxGap string
+var minRepetition int
+var maxRepetition int
+var margin int
+var minCount int
 
 var startTime string
 var endTime string
@@ -47,18 +54,26 @@ func main() {
 		Run:   run,
 	}
 
-	command.Flags().StringSliceVarP(&userDenoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, replaceGuidss)")
 	command.Flags().StringSliceVarP(&searchPatterns, "search", "s", []string{}, "search for lines matching regex pattern")
+
 	command.Flags().StringSliceVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
 	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
-
-	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
-	command.Flags().BoolVarP(&showBuckets, "showbuckets", "b", false, "show line counts for each time bucket")
-	command.Flags().BoolVarP(&showGaps, "showgaps", "g", false, "show bucket gaps and occurrences for denoised lines")
-	command.Flags().BoolVarP(&mergeFiles, "mergefiles", "m", false, "show original lines from each file interleaved by time")
 	command.Flags().StringVarP(&startTime, "starttime", "", "", "exclude lines before this time")
 	command.Flags().StringVarP(&endTime, "endtime", "", "", "exclude lines after this time")
 
+	command.Flags().StringVarP(&bucketLength, "bucketlength", "l", "1m", "length of time in each bucket")
+	command.Flags().BoolVarP(&showBuckets, "showbuckets", "b", false, "show line counts for each time bucket")
+	command.Flags().BoolVarP(&mergeFiles, "mergefiles", "m", false, "show original lines from each file interleaved by time")
+
+	command.Flags().BoolVarP(&showGaps, "showgaps", "g", false, "show bucket gaps and occurrences for denoised lines")
+	command.Flags().StringVarP(&minGap, "mingap", "", "", "exclude gaps smaller than this duration")
+	command.Flags().StringVarP(&maxGap, "maxgap", "", "", "exclude gaps larger than this duration")
+	command.Flags().IntVarP(&minRepetition, "minrep", "", -1, "exclude gaps with few repetitions")
+	command.Flags().IntVarP(&maxRepetition, "maxrep", "", -1, "exclude gaps with many repetitions")
+	command.Flags().IntVarP(&margin, "margin", "", 0, "max difference in number of similar lines in two buckets")
+	command.Flags().IntVarP(&minCount, "mincount", "", 1, "minimum number of similar lines in a bucket")
+
+	command.Flags().StringSliceVarP(&userDenoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, replaceGuidss)")
 	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
 	command.Flags().BoolVarP(&replaceGuids, "guids", "", true, "denoise guids")
 	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
@@ -200,7 +215,7 @@ func run(cmd *cobra.Command, args []string) {
 
 	if showBuckets {
 		os.Stdout.Write([]byte{'\n'})
-		err = lsl.Buckets(result, os.Stdout, mergeFiles)
+		err = lsl.Buckets(result, os.Stdout, mergeFiles, minCount)
 		if err != nil {
 			logger.Printf("Error rendering buckets: %v\n", err)
 			os.Exit(1)
@@ -208,8 +223,29 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	if showGaps {
+		var min *time.Duration
+		var max *time.Duration
+		if minGap != "" {
+			gap, err := time.ParseDuration(minGap)
+			if err != nil {
+				logger.Printf("Error parsing minGap: %v\n", err)
+				os.Exit(1)
+			} else {
+				min = &gap
+			}
+		}
+		if maxGap != "" {
+			gap, err := time.ParseDuration(maxGap)
+			if err != nil {
+				logger.Printf("Error parsing maxGap: %v\n", err)
+				os.Exit(1)
+			} else {
+				max = &gap
+			}
+		}
+
 		os.Stdout.Write([]byte{'\n'})
-		err = lsl.LastSeen(result, os.Stdout)
+		err = lsl.LastSeen(result, os.Stdout, min, max, minRepetition, maxRepetition, minCount, margin)
 		if err != nil {
 			logger.Printf("Error rendering gaps: %v\n", err)
 			os.Exit(1)
