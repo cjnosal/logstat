@@ -22,7 +22,9 @@ type LogStat interface {
 	ProcessFiles(logFiles []string, config Config) (*Result, error)
 	ProcessStream(reader io.Reader, config Config) (*Result, error)
 	Histogram(result *Result, out io.Writer) error
-	Buckets(result *Result, out io.Writer, showOriginalLines bool) error
+	Buckets(result *Result, out io.Writer, showOriginalLines bool, minCount int) error
+	LastSeen(result *Result, out io.Writer, minGap *time.Duration, maxGap *time.Duration,
+		minRepetition int, maxRepetition int, minCount int, margin int) error
 }
 
 func NewLogStat(logger *log.Logger) LogStat {
@@ -275,7 +277,7 @@ func (l *logStat) Histogram(result *Result, out io.Writer) error {
 	return nil
 }
 
-func (l *logStat) Buckets(result *Result, out io.Writer, showOriginalLines bool) error {
+func (l *logStat) Buckets(result *Result, out io.Writer, showOriginalLines bool, minCount int) error {
 	outLog := log.New(out, "", 0)
 
 	bucketTimes := make(timeSlice, len(result.Buckets))
@@ -287,21 +289,29 @@ func (l *logStat) Buckets(result *Result, out io.Writer, showOriginalLines bool)
 	sort.Sort(bucketTimes)
 
 	for _, startTime := range bucketTimes {
-		outLog.Printf("%s:\n", startTime)
+		header := fmt.Sprintf("%s:\n", startTime)
 		bucket := result.Buckets[startTime]
 		for note := range bucket.Notes {
-			outLog.Printf("  %s\n", note)
+			header += fmt.Sprintf("  %s\n", note)
 		}
-		outLog.Printf("\n")
+		empty := true
 
 		for l, c := range bucket.Clusters {
 			sum := 0
 			for _, lines := range c.OriginalLines {
 				sum += len(lines)
 			}
-			outLog.Printf("  %4d %s\n", sum, l)
+			if sum >= minCount {
+				if empty {
+					outLog.Println(header)
+					empty = false
+				}
+				outLog.Printf("  %4d %s\n", sum, l)
+			}
 		}
-		outLog.Printf("\n")
+		if !empty {
+			outLog.Printf("\n")
+		}
 
 		if showOriginalLines {
 			lineTimes := make(timeSlice, bucket.LineCount)
@@ -320,6 +330,13 @@ func (l *logStat) Buckets(result *Result, out io.Writer, showOriginalLines bool)
 				}
 				prevTime = lineTime
 				for _, c := range bucket.Clusters {
+					sum := 0
+					for _, lines := range c.OriginalLines {
+						sum += len(lines)
+					}
+					if sum < minCount {
+						continue
+					}
 					clusterLines := c.OriginalLines[lineTime]
 					if clusterLines == nil {
 						continue
@@ -329,7 +346,99 @@ func (l *logStat) Buckets(result *Result, out io.Writer, showOriginalLines bool)
 					}
 				}
 			}
-			outLog.Printf("\n")
+			if !empty {
+				outLog.Printf("\n")
+			}
+		}
+	}
+
+	return nil
+}
+
+type Occurrences struct {
+	repsByMagnitude map[int]int
+}
+
+func (l *logStat) LastSeen(result *Result, out io.Writer, minGap *time.Duration, maxGap *time.Duration,
+	minRepetition int, maxRepetition int, minCount int, margin int) error {
+	outLog := log.New(out, "", 0)
+
+	bucketTimes := make(timeSlice, len(result.Buckets))
+	i := 0
+	for k := range result.Buckets {
+		bucketTimes[i] = k
+		i++
+	}
+	sort.Sort(bucketTimes)
+
+	gaps := map[time.Duration]map[string]*Occurrences{}
+	for i, startTime := range bucketTimes {
+		for ref, cluster := range result.Buckets[startTime].Clusters {
+			sum := 0
+			for _, lines := range cluster.OriginalLines {
+				sum += len(lines)
+			}
+
+			for j := i - 1; j >= 0; j-- {
+				match := result.Buckets[bucketTimes[j]].Clusters[ref]
+
+				if match != nil {
+					matchsum := 0
+					for _, lines := range match.OriginalLines {
+						matchsum += len(lines)
+					}
+
+					if int(math.Abs(float64(matchsum-sum))) <= margin {
+						gap := startTime.Sub(bucketTimes[j])
+						smaller := int(math.Min(float64(matchsum), float64(sum)))
+						grouping := gaps[gap]
+						if grouping == nil {
+							grouping = map[string]*Occurrences{}
+							gaps[gap] = grouping
+						}
+						occurrences := grouping[ref]
+						if occurrences == nil {
+							occurrences = &Occurrences{
+								repsByMagnitude: map[int]int{},
+							}
+							grouping[ref] = occurrences
+						}
+						index := smaller
+						if margin > 0 {
+							index = smaller/margin + 1
+						}
+						occurrences.repsByMagnitude[index] = occurrences.repsByMagnitude[index] + 1
+						break
+					}
+				}
+			}
+		}
+	}
+	gapLengths := make(durationSlice, len(gaps))
+	i = 0
+	for k := range gaps {
+		gapLengths[i] = k
+		i++
+	}
+	sort.Sort(gapLengths)
+
+	for _, d := range gapLengths {
+		if (minGap != nil && d < *minGap) || (maxGap != nil && d > *maxGap) {
+			continue
+		}
+		for ref, occurrences := range gaps[d] {
+			for index, reps := range occurrences.repsByMagnitude {
+				if (minRepetition > 0 && reps < minRepetition) || (maxRepetition > 0 && reps > maxRepetition) {
+					continue
+				}
+				magnitude := index
+				if margin > 0 {
+					magnitude = magnitude * margin
+				}
+				if magnitude >= minCount {
+					outLog.Printf("%s %3d occurrences of magnitude %3d: %s\n", d, reps, magnitude, ref)
+				}
+			}
 		}
 	}
 
@@ -347,5 +456,19 @@ func (p timeSlice) Less(i, j int) bool {
 }
 
 func (p timeSlice) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+
+type durationSlice []time.Duration
+
+func (p durationSlice) Len() int {
+	return len(p)
+}
+
+func (p durationSlice) Less(i, j int) bool {
+	return p[i] < p[j]
+}
+
+func (p durationSlice) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }
