@@ -6,14 +6,19 @@ import (
 
 type LineProcessor interface {
 	Match(line string) bool
-	Denoise(line string, replacement string) string
+	Denoise(line string) string
 	Extract(line string) []string
 }
 
-func NewLineProcessor(matchPatterns []string, denoisePatterns []string, extractPatterns []string) (LineProcessor, error) {
+type noiseReplacement struct {
+	pattern *regexp.Regexp
+	replacement string
+}
+
+func NewLineProcessor(matchPatterns []string, denoisePatterns [][]string, extractPatterns []string) (LineProcessor, error) {
 	lp := &lineProcessor{
 		matchPatterns:   make([]*regexp.Regexp, len(matchPatterns)),
-		denoisePatterns: make([]*regexp.Regexp, len(denoisePatterns)),
+		denoisePatterns: make([]*noiseReplacement, len(denoisePatterns)),
 		extractPatterns: make([]*regexp.Regexp, len(extractPatterns)),
 	}
 	for i, p := range matchPatterns {
@@ -23,12 +28,15 @@ func NewLineProcessor(matchPatterns []string, denoisePatterns []string, extractP
 		}
 		lp.matchPatterns[i] = r
 	}
-	for i, p := range denoisePatterns {
-		r, e := regexp.Compile(p)
+	for i, a := range denoisePatterns {
+		r, e := regexp.Compile(a[0])
 		if e != nil {
 			return nil, e
 		}
-		lp.denoisePatterns[i] = r
+		lp.denoisePatterns[i] = &noiseReplacement {
+			pattern: r,
+			replacement: a[1],
+		}
 	}
 	for i, p := range extractPatterns {
 		r, e := regexp.Compile(p)
@@ -42,7 +50,7 @@ func NewLineProcessor(matchPatterns []string, denoisePatterns []string, extractP
 
 type lineProcessor struct {
 	matchPatterns   []*regexp.Regexp
-	denoisePatterns []*regexp.Regexp
+	denoisePatterns []*noiseReplacement
 	extractPatterns []*regexp.Regexp
 }
 
@@ -55,9 +63,9 @@ func (lp *lineProcessor) Match(line string) bool {
 	return false
 }
 
-func (lp *lineProcessor) Denoise(line string, replacement string) string {
+func (lp *lineProcessor) Denoise(line string) string {
 	for _, r := range lp.denoisePatterns {
-		line = r.ReplaceAllString(line, replacement)
+		line = r.pattern.ReplaceAllString(line, r.replacement)
 	}
 	return line
 }

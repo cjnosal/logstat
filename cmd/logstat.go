@@ -73,8 +73,8 @@ func main() {
 	command.Flags().IntVarP(&margin, "margin", "", 0, "max difference in number of similar lines in two buckets")
 	command.Flags().IntVarP(&minCount, "mincount", "", 1, "minimum number of similar lines in a bucket")
 
-	command.Flags().StringArrayVarP(&userDenoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, replaceGuidss)")
-	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
+	command.Flags().StringArrayVarP(&userDenoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, guids)\ncan include custom replacement (overriding -n) with -d pattern=replacement\ncan escape = with \\")
+	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "default string to show where user provided denoise patterns were removed")
 	command.Flags().BoolVarP(&replaceGuids, "guids", "", true, "denoise guids")
 	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
 	command.Flags().BoolVarP(&replaceAlphaNumeric, "alphanum", "", true, "denoise all alphanumeric strings")
@@ -143,31 +143,43 @@ func run(cmd *cobra.Command, args []string) {
 	datetimeFormats = append(datetimeFormats, defaultDateTimeFormats...)
 	datetimePatterns = append(datetimePatterns, defaultDateTimePattern)
 
+	denoisePatterns := [][]string{}
 	// regexes must be ordered from more structured to less structured
-	denoisePatterns := datetimePatterns
+	for _, d := range datetimePatterns {
+		denoisePatterns = append(denoisePatterns, []string{d, "(date)"})
+	}
+
 	if replaceGuids {
-		denoisePatterns = append(denoisePatterns, regex.GUID)
+		denoisePatterns = append(denoisePatterns, []string{regex.GUID, "(guid)"})
 	}
 	if replaceBase64 {
-		denoisePatterns = append(denoisePatterns, regex.BASE64)
+		denoisePatterns = append(denoisePatterns, []string{regex.BASE64, "(base64)"})
 	}
 	if replaceLongHex {
-		denoisePatterns = append(denoisePatterns, regex.LONGHEX)
+		denoisePatterns = append(denoisePatterns, []string{regex.LONGHEX, "(hex)"})
 	}
 	if replaceLongWords {
-		denoisePatterns = append(denoisePatterns, regex.LONGWORDS)
+		denoisePatterns = append(denoisePatterns, []string{regex.LONGWORDS, "(longword)"})
 	}
 	if replaceEmails {
-		denoisePatterns = append(denoisePatterns, regex.EMAILS)
+		denoisePatterns = append(denoisePatterns, []string{regex.EMAILS, "(email)"})
 	}
-	denoisePatterns = append(denoisePatterns, userDenoisePatterns...)
+	unescapedAssignment := regexp.MustCompile("[^\\\\]((\\\\\\\\)*)?=")
+	for _, d := range userDenoisePatterns {
+		indices := unescapedAssignment.FindStringIndex(d)
+		if indices == nil {
+			denoisePatterns = append(denoisePatterns, []string{d, noiseReplacement})
+		} else {
+			denoisePatterns = append(denoisePatterns, []string{d[0:indices[1]-1], d[indices[1]:]})
+		}
+	}
 	if replaceAlphaNumeric {
-		denoisePatterns = append(denoisePatterns, regex.ALPHANUM)
+		denoisePatterns = append(denoisePatterns, []string{regex.ALPHANUM, "(alphanum)"})
 	}
 	if replaceNumbers {
-		denoisePatterns = append(denoisePatterns, regex.NUMBERS)
+		denoisePatterns = append(denoisePatterns, []string{regex.NUMBERS, "(number)"})
 	}
-	denoisePatterns = append(denoisePatterns, fmt.Sprintf("(%s)+", regexp.QuoteMeta(noiseReplacement)))
+	denoisePatterns = append(denoisePatterns, []string{fmt.Sprintf("(%s)+", regexp.QuoteMeta(noiseReplacement)), noiseReplacement})
 
 	var start *time.Time
 	var end *time.Time
