@@ -54,10 +54,10 @@ func main() {
 		Run:   run,
 	}
 
-	command.Flags().StringSliceVarP(&searchPatterns, "search", "s", []string{}, "search for lines matching regex pattern")
+	command.Flags().StringArrayVarP(&searchPatterns, "search", "s", []string{}, "search for lines matching regex pattern")
 
-	command.Flags().StringSliceVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
-	command.Flags().StringSliceVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
+	command.Flags().StringArrayVarP(&datetimePatterns, "datetime", "t", []string{}, "extract line datetime regex pattern")
+	command.Flags().StringArrayVarP(&datetimeFormats, "dateformat", "f", []string{}, "format for parsing extracted datetimes (use golang reference time 'Mon Jan 2 15:04:05 MST 2006')")
 	command.Flags().StringVarP(&startTime, "starttime", "", "", "exclude lines before this time")
 	command.Flags().StringVarP(&endTime, "endtime", "", "", "exclude lines after this time")
 
@@ -73,7 +73,7 @@ func main() {
 	command.Flags().IntVarP(&margin, "margin", "", 0, "max difference in number of similar lines in two buckets")
 	command.Flags().IntVarP(&minCount, "mincount", "", 1, "minimum number of similar lines in a bucket")
 
-	command.Flags().StringSliceVarP(&userDenoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, replaceGuidss)")
+	command.Flags().StringArrayVarP(&userDenoisePatterns, "denoise", "d", []string{}, "regex patterns to ignore when determining unique lines (e.g. timestamps, replaceGuidss)")
 	command.Flags().StringVarP(&noiseReplacement, "noise", "n", "*", "string to show where noise was removed")
 	command.Flags().BoolVarP(&replaceGuids, "guids", "", true, "denoise guids")
 	command.Flags().BoolVarP(&replaceBase64, "base64", "", true, "denoise base64 strings")
